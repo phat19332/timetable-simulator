@@ -36,8 +36,15 @@ function App() {
     // AI States
     const [apiConfig, setApiConfig] = useState(() => {
         const saved = localStorage.getItem('ai_api_config');
-        if (saved) return JSON.parse(saved);
-        return { provider: 'gemini', baseUrl: '', model: 'gemini-1.5-flash', apiKey: '' };
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            // Tự động nâng cấp model mặc định cũ lên model mới
+            if (parsed.model === 'gemini-1.5-flash') {
+                parsed.model = 'gemini-3-flash-preview';
+            }
+            return parsed;
+        }
+        return { provider: 'gemini', baseUrl: '', model: 'gemini-3-flash-preview', apiKey: '' };
     });
     const [isAiLoading, setIsAiLoading] = useState(false);
     const [showApiModal, setShowApiModal] = useState(false);
