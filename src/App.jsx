@@ -15,13 +15,13 @@ const exampleText = `501044 Cấu trúc rời rạc | Discrete Structures 4 01 -
 501044 Cấu trúc rời rạc | Discrete Structures 4 01:1 ----123--------, Thứ 4, Phòng A305, ---4567-012-----`;
 
 const dayLabels = {
-    2: 'Thứ 2',
-    3: 'Thứ 3',
-    4: 'Thứ 4',
-    5: 'Thứ 5',
-    6: 'Thứ 6',
-    7: 'Thứ 7',
-    8: 'CN',
+    2: 'Monday',
+    3: 'Tuesday',
+    4: 'Wednesday',
+    5: 'Thursday',
+    6: 'Friday',
+    7: 'Saturday',
+    8: 'Sunday',
 };
 
 const cellLabel = (value) => `T${value}`;
@@ -61,7 +61,7 @@ function App() {
                     : null;
 
             if (otherSelectedNow && otherSelectedNow.baseGroup !== group.baseGroup) {
-                setDownloadStatus(`Không tương thích: nhóm ${group.group} không cùng base với ${otherSelectedNow.group}.`);
+                setDownloadStatus(`Incompatible: Group ${group.group} does not share the same base as ${otherSelectedNow.group}.`);
                 return current;
             }
 
@@ -77,7 +77,7 @@ function App() {
             const conflictSource = nextGroups.filter((item) => item.id !== group.id);
 
             if (hasConflict(group, conflictSource)) {
-                setDownloadStatus(`Nhóm ${group.code} - ${group.group} bị trùng lịch.`);
+                setDownloadStatus(`Group ${group.code} - ${group.group} has a schedule conflict.`);
                 return current;
             }
 
@@ -90,7 +90,7 @@ function App() {
             );
 
             if (conflict) {
-                setDownloadStatus(`Không thể chọn ${group.code} - ${group.group} vì bị xung đột.`);
+                setDownloadStatus(`Cannot select ${group.code} - ${group.group} due to conflict.`);
                 return current;
             }
 
@@ -120,7 +120,7 @@ function App() {
         const element = document.getElementById('timetable-capture');
         if (!element) return;
 
-        setDownloadStatus('Đang tạo ảnh...');
+        setDownloadStatus('Generating image...');
         try {
             const canvas = await html2canvas(element, {
                 backgroundColor: '#0f172a', // match slate-900
@@ -131,10 +131,10 @@ function App() {
             link.download = 'tkb.png';
             link.href = canvas.toDataURL('image/png');
             link.click();
-            setDownloadStatus('Đã tải ảnh TKB.');
+            setDownloadStatus('Timetable image downloaded.');
             setTimeout(() => setDownloadStatus(''), 3000);
         } catch (e) {
-            setDownloadStatus('Lỗi khi tải ảnh.');
+            setDownloadStatus('Error downloading image.');
         }
     };
 
@@ -159,7 +159,7 @@ function App() {
                         className="group flex items-center gap-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 px-4 py-2 text-sm font-semibold text-cyan-400 transition-all hover:bg-cyan-500 hover:text-slate-950 shadow-[0_0_20px_rgba(6,182,212,0.1)] hover:shadow-[0_0_20px_rgba(6,182,212,0.3)]"
                     >
                         <Download className="h-4 w-4 transition-transform group-hover:-translate-y-0.5" />
-                        Tải Ảnh
+                        Download Image
                     </button>
                 </div>
             </header>
@@ -181,8 +181,8 @@ function App() {
                                         <Info className="h-5 w-5" />
                                     </div>
                                     <div>
-                                        <h2 className="text-base font-semibold text-white">Dữ liệu nguồn ({courses.length} môn)</h2>
-                                        <p className="text-xs text-slate-400">Dán dữ liệu thô để phân tích thời khóa biểu.</p>
+                                        <h2 className="text-base font-semibold text-white">Source Data ({courses.length} courses)</h2>
+                                        <p className="text-xs text-slate-400">Paste raw data to analyze the timetable.</p>
                                     </div>
                                 </div>
                                 {isInputOpen ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
@@ -195,7 +195,7 @@ function App() {
                                             value={rawText}
                                             onChange={(event) => setRawText(event.target.value)}
                                             className="mt-4 h-40 w-full resize-none rounded-xl border border-white/10 bg-slate-950 p-4 text-sm leading-relaxed text-slate-300 placeholder:text-slate-600 focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 transition-all"
-                                            placeholder="Dán dữ liệu TKB thô vào đây..."
+                                            placeholder="Paste raw timetable data here..."
                                         />
                                     </div>
                                 </div>
@@ -231,14 +231,14 @@ function App() {
                                                     {course.code} - {course.courseName}
                                                 </h3>
                                                 <p className="mt-1 text-xs font-medium text-slate-400">
-                                                    {course.englishName || 'No English name'} <span className="mx-1.5 opacity-50">•</span> {course.credits} tín chỉ
+                                                    {course.englishName || 'No English name'} <span className="mx-1.5 opacity-50">•</span> {course.credits} credits
                                                 </p>
                                             </div>
                                         </div>
 
                                         <div className="space-y-4">
                                             <GroupSection
-                                                title="Nhóm Lý Thuyết"
+                                                title="Theory Group"
                                                 groups={course.theoryGroups}
                                                 selectedGroup={courseSelection.theory}
                                                 selectedGroups={selectedGroups}
@@ -251,7 +251,7 @@ function App() {
                                             />
                                             {course.practiceGroups && course.practiceGroups.length > 0 && (
                                                 <GroupSection
-                                                    title="Nhóm Thực Hành"
+                                                    title="Practice Group"
                                                     groups={course.practiceGroups}
                                                     selectedGroup={courseSelection.practice}
                                                     selectedGroups={selectedGroups}
@@ -275,8 +275,8 @@ function App() {
                         <div className="overflow-hidden rounded-2xl border border-white/10 bg-slate-900/80 shadow-2xl backdrop-blur-xl">
                             <div className="border-b border-white/5 bg-slate-900/50 p-5 flex items-center justify-between">
                                 <div>
-                                    <h2 className="text-lg font-semibold text-white">Preview TKB</h2>
-                                    <p className="text-xs text-slate-400 mt-1">Click vào môn đã chọn trên bảng để hủy bỏ.</p>
+                                    <h2 className="text-lg font-semibold text-white">Timetable Preview</h2>
+                                    <p className="text-xs text-slate-400 mt-1">Click a selected course on the grid to remove it.</p>
                                 </div>
                                 <div className="flex flex-wrap gap-2 justify-end max-w-[50%]">
                                     {selectedGroups.map((group) => (
@@ -292,7 +292,7 @@ function App() {
                                     <div className="min-w-[700px]">
                                         {/* Header Row */}
                                         <div className="grid grid-cols-[60px_repeat(7,minmax(0,1fr))] border-b border-white/5 bg-slate-900/40 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                                            <div className="p-3 text-center">Tiết</div>
+                                            <div className="p-3 text-center">Period</div>
                                             {DAY_ORDER.map((day) => (
                                                 <div key={day} className="border-l border-white/5 p-3 text-center">
                                                     {dayLabels[day]}
@@ -384,7 +384,7 @@ function GroupSection({ title, groups, selectedGroup, selectedGroups, onSelect, 
                     const isDisabled = !selectedItem && (isConflict || !compatible);
                     
                     const conflictLabels = getConflictLabels(group, conflictSource);
-                    const incompatibilityLabel = !compatible ? `Không cùng base với ${otherSelected.group}` : '';
+                    const incompatibilityLabel = !compatible ? `Base mismatch with ${otherSelected.group}` : '';
                     
                     let btnClass = 'border-white/10 bg-slate-800/50 text-slate-300 hover:border-cyan-500/30 hover:bg-cyan-500/10 hover:text-cyan-100';
                     if (selectedItem) {
