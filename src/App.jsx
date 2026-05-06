@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import html2canvas from 'html2canvas';
-import { Download, ChevronDown, ChevronUp, AlertCircle, X, Info } from 'lucide-react';
+import { Download, ChevronDown, ChevronUp, AlertCircle, X, Info, Sparkles, Key, Loader2 } from 'lucide-react';
 import {
     DAY_ORDER,
     PERIODS,
@@ -32,6 +32,21 @@ function App() {
     const [hoveredGroup, setHoveredGroup] = useState(null);
     const [downloadStatus, setDownloadStatus] = useState('');
     const [isInputOpen, setIsInputOpen] = useState(false); // Collapsible input
+
+    // AI States
+    const [apiConfig, setApiConfig] = useState(() => {
+        const saved = localStorage.getItem('ai_api_config');
+        if (saved) return JSON.parse(saved);
+        return { provider: 'gemini', baseUrl: '', model: 'gemini-1.5-flash', apiKey: '' };
+    });
+    const [isAiLoading, setIsAiLoading] = useState(false);
+    const [showApiModal, setShowApiModal] = useState(false);
+    const [apiError, setApiError] = useState('');
+    const [aiCustomPrompt, setAiCustomPrompt] = useState('');
+
+    useEffect(() => {
+        localStorage.setItem('ai_api_config', JSON.stringify(apiConfig));
+    }, [apiConfig]);
 
     const parsedRecords = useMemo(() => parseTimetableInput(rawText), [rawText]);
     const courses = useMemo(() => groupByCourse(parsedRecords), [parsedRecords]);
@@ -138,8 +153,260 @@ function App() {
         }
     };
 
+    const handleAutoFillWithAI = async () => {
+        if (!apiConfig.apiKey) {
+            setShowApiModal(true);
+            return;
+        }
+
+        if (courses.length === 0) {
+            setDownloadStatus('No courses available to schedule.');
+            return;
+        }
+
+        setIsAiLoading(true);
+        setApiError('');
+        setDownloadStatus('AI is analyzing... This might take 1-2 minutes. Tip: You can open a new tab to schedule manually while waiting.');
+
+        try {
+            const simplifiedCourses = courses.map(c => ({
+                code: c.code,
+                theoryGroups: c.theoryGroups.map(g => ({ id: g.id, baseGroup: g.baseGroup, day: g.schedule.day, periods: g.schedule.periods })),
+                practiceGroups: c.practiceGroups.map(g => ({ id: g.id, baseGroup: g.baseGroup, day: g.schedule.day, periods: g.schedule.periods }))
+            }));
+
+            const prompt = `You are an expert university scheduling assistant. I have a list of courses. For each course, select exactly one theory group, and if practice groups exist, select exactly one practice group.
+RULES:
+1. No schedule conflicts: Day and periods cannot overlap between ANY selected groups across all courses.
+2. Base group match: For a single course, the selected theory and practice group MUST have the exact same 'baseGroup' string.
+3. Maximize course selection: Try to schedule as many courses as possible without conflicts.
+${aiCustomPrompt ? `\nUSER SPECIFIC REQUIREMENTS (CRITICAL):\n${aiCustomPrompt}\n` : ''}
+Here is the courses data in JSON:
+${JSON.stringify(simplifiedCourses)}
+
+Return ONLY a JSON array of objects. Do not include markdown formatting like \`\`\`json. Each object must represent a course selection and have this exact structure:
+[
+  {
+    "courseCode": "string",
+    "theoryGroupId": "string", 
+    "practiceGroupId": "string | null" 
+  }
+]
+Output ONLY valid JSON.`;
+
+            let text = "";
+
+            if (apiConfig.provider === 'gemini') {
+                const defaultModels = [
+                    'gemini-3-flash-preview',
+                    'gemini-1.5-flash', 
+                    'gemini-1.5-flash-8b',
+                    'gemini-1.5-flash-latest', 
+                    'gemini-1.5-pro', 
+                    'gemini-pro'
+                ];
+                const modelsToTry = apiConfig.model ? [apiConfig.model, ...defaultModels] : defaultModels;
+                let success = false;
+                let lastError = null;
+
+                for (const currentModel of modelsToTry) {
+                    try {
+                        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${currentModel.trim()}:generateContent?key=${apiConfig.apiKey.trim()}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{ parts: [{ text: prompt }] }],
+                                generationConfig: { temperature: 0.1 }
+                            })
+                        });
+
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.error?.message || `Failed to fetch from Gemini API (${currentModel})`);
+                        }
+
+                        const data = await response.json();
+                        text = data.candidates[0].content.parts[0].text;
+                        success = true;
+                        break; // Stop if successful
+                    } catch (e) {
+                        lastError = e;
+                        console.warn(`Model ${currentModel} failed, trying next...`);
+                    }
+                }
+
+                if (!success) {
+                    throw lastError || new Error("All Gemini models failed to process the request.");
+                }
+            } else {
+                const url = apiConfig.baseUrl || 'https://api.openai.com/v1/chat/completions';
+                const model = apiConfig.model || 'gpt-3.5-turbo';
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiConfig.apiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: model,
+                        messages: [
+                            { role: "system", content: "You are a scheduling assistant. Return ONLY valid JSON array without formatting." },
+                            { role: "user", content: prompt }
+                        ],
+                        temperature: 0.1
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error?.message || 'Failed to fetch from OpenAI API');
+                }
+
+                const data = await response.json();
+                text = data.choices[0].message.content;
+            }
+            
+            // Robust JSON extraction: Find the first '[' and last ']'
+            const jsonMatch = text.match(/\[[\s\S]*\]/);
+            if (!jsonMatch) {
+                throw new Error("AI did not return a valid JSON array. Try again or check your prompt.");
+            }
+            text = jsonMatch[0];
+            
+            const aiSelections = JSON.parse(text);
+            
+            if (!Array.isArray(aiSelections)) {
+                throw new Error("AI response format is invalid (not an array).");
+            }
+
+            // Apply selections
+            const newSelected = {};
+            let matchCount = 0;
+            aiSelections.forEach(selection => {
+                const course = courses.find(c => c.code === selection.courseCode);
+                if (course) {
+                    const theory = course.theoryGroups.find(g => g.id === selection.theoryGroupId) || null;
+                    const practice = course.practiceGroups.find(g => g.id === selection.practiceGroupId) || null;
+                    if (theory || practice) {
+                        newSelected[course.code] = { theory, practice };
+                        matchCount++;
+                    }
+                }
+            });
+
+            if (matchCount === 0) {
+                throw new Error("AI suggested groups but they don't match your source data IDs.");
+            }
+
+            setSelected(newSelected);
+            setDownloadStatus(`AI has successfully scheduled ${matchCount} courses!`);
+            setTimeout(() => setDownloadStatus(''), 4000);
+
+        } catch (error) {
+            console.error("AI Error Debug:", error);
+            setApiError(`Error: ${error.message}`);
+            setDownloadStatus('');
+            setShowApiModal(true);
+        } finally {
+            setIsAiLoading(false);
+        }
+    };
+
     return (
-        <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-cyan-500/30">
+        <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-cyan-500/30 relative">
+            
+            {/* API Key Modal */}
+            {showApiModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+                    <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-slate-900 shadow-2xl">
+                        <div className="border-b border-white/5 bg-slate-800/50 p-4 flex items-center justify-between">
+                            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                                <Key className="h-5 w-5 text-cyan-400" />
+                                AI API Configuration
+                            </h3>
+                            <button onClick={() => setShowApiModal(false)} className="text-slate-400 hover:text-white">
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
+                        <div className="p-6 flex flex-col gap-4">
+                            <p className="text-sm text-slate-300">
+                                Connect any AI provider to auto-fill the timetable. Stored securely in your browser.
+                            </p>
+                            
+                            <div>
+                                <label className="block text-xs font-medium text-slate-400 mb-1">Provider Format</label>
+                                <select 
+                                    value={apiConfig.provider} 
+                                    onChange={e => setApiConfig({...apiConfig, provider: e.target.value})}
+                                    className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-sm text-slate-100 focus:border-cyan-500/50 focus:outline-none"
+                                >
+                                    <option value="gemini">Google Gemini</option>
+                                    <option value="openai">OpenAI Compatible (ChatGPT, DeepSeek, Groq)</option>
+                                </select>
+                            </div>
+
+                            {apiConfig.provider === 'openai' && (
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-400 mb-1">Base URL (Leave blank for OpenAI)</label>
+                                    <input
+                                        type="text"
+                                        value={apiConfig.baseUrl}
+                                        onChange={(e) => setApiConfig({...apiConfig, baseUrl: e.target.value})}
+                                        placeholder="https://api.openai.com/v1/chat/completions"
+                                        className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-sm text-slate-100 placeholder-slate-600 focus:border-cyan-500/50 focus:outline-none"
+                                    />
+                                </div>
+                            )}
+
+                            <div>
+                                <label className="block text-xs font-medium text-slate-400 mb-1">Model Name {apiConfig.provider === 'gemini' && "(Optional)"}</label>
+                                <input
+                                    type="text"
+                                    value={apiConfig.model}
+                                    onChange={(e) => setApiConfig({...apiConfig, model: e.target.value})}
+                                    placeholder={apiConfig.provider === 'gemini' ? "Auto-detect (Default: gemini-3-flash-preview)" : "gpt-3.5-turbo"}
+                                    className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-sm text-slate-100 placeholder-slate-600 focus:border-cyan-500/50 focus:outline-none"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-medium text-slate-400 mb-1">API Key</label>
+                                <input
+                                    type="password"
+                                    value={apiConfig.apiKey}
+                                    onChange={(e) => setApiConfig({...apiConfig, apiKey: e.target.value})}
+                                    placeholder="sk-..."
+                                    className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-sm text-slate-100 placeholder-slate-600 focus:border-cyan-500/50 focus:outline-none"
+                                />
+                            </div>
+
+                            {apiError && (
+                                <div className="rounded-lg bg-rose-500/10 p-3 text-xs text-rose-400 border border-rose-500/20">
+                                    {apiError}
+                                </div>
+                            )}
+                            <div className="mt-2 flex justify-end gap-3">
+                                <button
+                                    onClick={() => setShowApiModal(false)}
+                                    className="rounded-xl px-4 py-2 text-sm font-medium text-slate-300 hover:bg-white/5"
+                                >
+                                    Close
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setShowApiModal(false);
+                                        if (apiConfig.apiKey) handleAutoFillWithAI();
+                                    }}
+                                    className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400"
+                                >
+                                    Save & Run
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <header className="sticky top-0 z-30 border-b border-white/5 bg-slate-950/60 backdrop-blur-xl">
                 <div className="mx-auto flex max-w-[1800px] items-center justify-between px-6 py-4">
@@ -209,6 +476,52 @@ function App() {
                                 {downloadStatus}
                             </div>
                         )}
+
+                        {/* AI Assistant Panel */}
+                        <div className="flex flex-col gap-4 rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/10 to-blue-500/5 p-5 shadow-lg backdrop-blur-md">
+                            <div>
+                                <h3 className="text-sm font-semibold text-cyan-50 flex items-center gap-2">
+                                    <Sparkles className="h-4 w-4 text-cyan-400" /> AI Auto-Schedule
+                                </h3>
+                                <p className="text-xs text-slate-400 mt-1">Let AI automatically find the best non-conflicting schedule for you.</p>
+                            </div>
+                            
+                            <textarea
+                                value={aiCustomPrompt}
+                                onChange={(e) => setAiCustomPrompt(e.target.value)}
+                                placeholder="Any specific requirements? (e.g., 'Avoid Mondays', 'No more than 4 classes a day', 'Try to schedule classes in the morning')"
+                                className="w-full h-20 resize-none rounded-xl border border-white/10 bg-slate-950/80 p-3 text-sm text-slate-200 placeholder-slate-600 focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 transition-all"
+                            />
+
+                            <div className="flex items-center justify-between mt-1">
+                                <button
+                                    onClick={() => setShowApiModal(true)}
+                                    className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:bg-white/10"
+                                    title="Configure API Key"
+                                >
+                                    <Key className="h-3 w-3" /> API Config
+                                </button>
+                                <button
+                                    onClick={handleAutoFillWithAI}
+                                    disabled={isAiLoading || courses.length === 0}
+                                    className="group relative flex items-center gap-2 overflow-hidden rounded-xl bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition-all hover:bg-cyan-400 hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {isAiLoading ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                        <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
+                                    )}
+                                    {isAiLoading ? 'Scheduling...' : 'Auto-fill'}
+                                </button>
+                            </div>
+                            {isAiLoading && (
+                                <div className="mt-2 rounded-lg bg-blue-500/10 p-3 text-xs leading-relaxed text-blue-300 border border-blue-500/20 animate-pulse">
+                                    <span className="font-semibold text-blue-200">Please wait:</span> AI is computing combinations. This process may take 1-3 minutes. 
+                                    <br/><br/>
+                                    <span className="opacity-80 text-blue-200/70">Tip: While waiting, you can duplicate this tab to build a manual schedule as backup.</span>
+                                </div>
+                            )}
+                        </div>
 
                         {/* Course List */}
                         <div className="flex flex-col gap-4">
