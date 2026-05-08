@@ -104,11 +104,17 @@ function App() {
             }
 
             const conflict = nextGroups.some((item, index) =>
-                nextGroups.slice(index + 1).some(
-                    (candidate) =>
-                        item.schedule.day === candidate.schedule.day &&
-                        item.schedule.periods.some((period) => candidate.schedule.periods.includes(period)),
-                ),
+                nextGroups.slice(index + 1).some((candidate) => {
+                    const itemSessions = item.sessions || [item.schedule];
+                    const candidateSessions = candidate.sessions || [candidate.schedule];
+                    return itemSessions.some((is) =>
+                        candidateSessions.some(
+                            (cs) =>
+                                is.day === cs.day &&
+                                is.periods.some((p) => cs.periods.includes(p)),
+                        ),
+                    );
+                }),
             );
 
             if (conflict) {
@@ -178,8 +184,16 @@ function App() {
         try {
             const simplifiedCourses = courses.map(c => ({
                 code: c.code,
-                theoryGroups: c.theoryGroups.map(g => ({ id: g.id, baseGroup: g.baseGroup, day: g.schedule.day, periods: g.schedule.periods })),
-                practiceGroups: c.practiceGroups.map(g => ({ id: g.id, baseGroup: g.baseGroup, day: g.schedule.day, periods: g.schedule.periods }))
+                theoryGroups: c.theoryGroups.map(g => ({
+                    id: g.id,
+                    baseGroup: g.baseGroup,
+                    sessions: (g.sessions || [g.schedule]).map(s => ({ day: s.day, periods: s.periods }))
+                })),
+                practiceGroups: c.practiceGroups.map(g => ({
+                    id: g.id,
+                    baseGroup: g.baseGroup,
+                    sessions: (g.sessions || [g.schedule]).map(s => ({ day: s.day, periods: s.periods }))
+                }))
             }));
 
             const prompt = `You are an expert university scheduling assistant. I have a list of courses. For each course, select exactly one theory group, and if practice groups exist, select exactly one practice group.
@@ -631,7 +645,8 @@ Output ONLY valid JSON.`;
                                                     const slotKey = `${day}-${period}`;
                                                     const entries = occupiedSlots.get(slotKey) || [];
                                                     const entry = entries[0];
-                                                    const isHoveredSlot = hoveredGroup && hoveredGroup.schedule.day === day && hoveredGroup.schedule.periods.includes(period);
+                                                    const hoveredSessions = hoveredGroup ? (hoveredGroup.sessions || [hoveredGroup.schedule]) : [];
+                                    const isHoveredSlot = hoveredSessions.some((s) => s.day === day && s.periods.includes(period));
 
                                                     return (
                                                         <div
@@ -662,7 +677,7 @@ Output ONLY valid JSON.`;
                                                                 </div>
                                                             )}
                                                             
-                                                            {!entry && isHoveredSlot && (
+                                                            {!entry && isHoveredSlot && hoveredGroup && (
                                                                 <div className="h-full rounded-lg border border-dashed border-cyan-500/30 bg-cyan-500/5 p-2 flex flex-col items-center justify-center text-center opacity-70 animate-pulse">
                                                                     <span className="text-xs font-semibold text-cyan-400">{hoveredGroup.code}</span>
                                                                     <span className="text-[10px] text-cyan-300/80">{hoveredGroup.group}</span>
@@ -729,7 +744,9 @@ function GroupSection({ title, groups, selectedGroup, selectedGroups, onSelect, 
                             {/* Tooltip for schedules */}
                             <div className="pointer-events-none absolute -top-10 z-10 w-max translate-y-2 opacity-0 transition-all group-hover/tooltip:-translate-y-0 group-hover/tooltip:opacity-100">
                                 <div className="rounded-md bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-200 shadow-xl border border-white/10">
-                                    {group.schedule.dayLabel} • {group.schedule.periodLabel} • {group.schedule.room}
+                                    {(group.sessions || [group.schedule]).map((s, i) => (
+                                        <div key={i}>{s.dayLabel} • {s.periodLabel} • {s.room}</div>
+                                    ))}
                                     {isDisabled && <div className="text-rose-400 mt-0.5">{conflictLabels.join(', ') || incompatibilityLabel}</div>}
                                 </div>
                                 {/* Tooltip Arrow */}
